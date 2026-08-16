@@ -1,0 +1,140 @@
+import TelegramBot from "node-telegram-bot-api";
+import fs from "fs";
+import { BOT_TOKEN, ADMIN_ID } from "./.env/constants";
+
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+// Хранение информации о пользователях, ожидающих поддержки
+let awaitingSupportMessage = {};
+// Хранение выбранных тем для пользователей
+
+let userTopics = {};
+
+// Темы и файлы с вопросами
+const topics = {
+  mindfulness: { name: "Осознанность", file: "topics/mindfulness.json" },
+  emotionRegulation: {
+    name: "Эмоциональная регуляция",
+    file: "topics/emotionRegulation.json",
+  },
+  distressTolerance: {
+    name: "Стрессоустойчивость",
+    file: "topics/distressTolerance.json",
+  },
+  interpersonalEffectiveness: {
+    name: "Межличностная эффективность",
+    file: "topics/interpersonalEffectiveness.json",
+  },
+};
+
+// Функция для получения вопросов по выбранным темам
+function getSkillsByTopics(userId) {
+  const selectedTopics = userTopics[userId] || Object.keys(topics);
+  let allQuestions = [];
+  selectedTopics.forEach((topic) => {
+    const questions = JSON.parse(fs.readFileSync(topics[topic].file, "utf8"));
+    allQuestions = allQuestions.concat(questions);
+  });
+  return allQuestions;
+}
+
+function getRandomQuestion(userId) {
+  const questions = getSkillsByTopics(userId);
+  const randomIndex = Math.floor(Math.random() * questions.length);
+  return questions[randomIndex];
+}
+
+bot.onText(/\/quiz/, (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  // Получаем случайный вопрос
+  const questionData = getRandomQuestion(userId);
+
+  // Отправляем опрос в виде викторины
+  bot
+    .sendPoll(
+      chatId,
+      questionData.question, // Вопрос
+      questionData.options, // Варианты ответов
+      {
+        type: "quiz", // Тип викторины
+        correct_option_id: questionData.correct_option_id, // Правильный ответ
+        is_anonymous: false, // Вопрос не будет анонимным
+      }
+    )
+    .then((pollMessage) => {
+      // Обрабатываем результаты опроса
+      bot.on("poll_answer", (answer) => {
+        if (answer.poll_id === pollMessage.poll.id) {
+          const selectedOption = answer.option_ids[0];
+          // Проверяем, правильный ли ответ
+          if (selectedOption !== questionData.correct_option_id) {
+            bot.sendMessage(chatId, questionData.explanation);
+          }
+        }
+      });
+    });
+});
+
+bot.onText(/\/settopic/, (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  const keyboard = Object.keys(topics).map((topicKey) => ({
+    text: `${(userTopics[userId] || []).includes(topicKey) ? "✅ " : ""}${
+      topics[topicKey].name
+    }`,
+    callback_data: topicKey,
+  }));
+
+  bot.sendMessage(chatId, "Выберите темы для вопросов:", {
+    reply_markup: {
+      inline_keyboard: [keyboard],
+    },
+  });
+});
+
+// Обработчик выбора тем
+bot.on("callback_query", (callbackQuery) => {
+  const message = callbackQuery.message;
+  const userId = callbackQuery.from.id;
+  const topicKey = callbackQuery.data;
+
+  // Инициализируем выбранные темы для пользователя, если их нет
+  if (!userTopics[userId]) {
+    userTopics[userId] = Object.keys(topics);
+  }
+
+  // Добавляем или удаляем тему
+  if (userTopics[userId].includes(topicKey)) {
+    userTopics[userId] = userTopics[userId].filter((t) => t !== topicKey);
+  } else {
+    userTopics[userId].push(topicKey);
+  }
+
+  // Обновляем сообщение с кнопками
+  const keyboard = Object.keys(topics).map((topicKey) => ({
+    text: `${userTopics[userId].includes(topicKey) ? "✅ " : ""}${
+      topics[topicKey].name
+    }`,
+    callback_data: topicKey,
+  }));
+
+  bot.editMessageReplyMarkup(
+    {
+      inline_keyboard: [keyboard],
+    },
+    { chat_id: message.chat.id, message_id: message.message_id }
+  );
+});
+
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(
+    chatId,
+    "Привет! Напиши /quiz, чтобы начать викторину. Для выбора тем используй /settopic."
+  );
+});
+
+console.log("Бот запущен.");
