@@ -1,2 +1,2 @@
 # dbt_bot
-Telegram bot to practice DBT skills
+WIP Telegram bot to practice DBT skills
